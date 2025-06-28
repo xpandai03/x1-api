@@ -51,7 +51,12 @@ def scrape_roster(base_url, sport, gender):
     with sync_playwright() as p:
         browser = p.chromium.launch(headless=True)
         page = browser.new_page()
-        page.goto(roster_url, timeout=60000, wait_until="domcontentloaded")
+        try:
+            page.goto(roster_url, timeout=60000, wait_until="domcontentloaded")
+        except Exception as e:
+            print(f"Error loading roster page: {e}")
+            browser.close()
+            return {"error": f"Could not load roster: {e}", "roster": []}
 
         # Attempt to auto-click cookie popups using multiple likely selectors
         cookie_selectors = [

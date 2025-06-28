@@ -2,23 +2,21 @@ import time
 from playwright.sync_api import sync_playwright
 
 def build_possible_roster_paths(sport, gender):
-    """
-    Return a list of likely roster path patterns for a given sport/gender combo.
-    """
     sport = sport.lower()
     gender = gender.lower()
-
-    # Common patterns for NCAA and Sidearm/Presto/CMS sites
+    # List of common patterns including Presto/Sidearm/CMS edge cases
     paths = [
         f"/sports/{gender}-{sport}/roster",
         f"/sports/{sport}/roster",
-        f"/roster.aspx?path={sport}",            # Presto/others
-        f"/sports/{gender}{sport}/roster",
-        f"/roster",                              # fallback, some small schools
+        f"/roster.aspx?path={sport}",
+        f"/sports/{sport}/roster.aspx",
+        f"/sports/{sport}/{gender}/roster",
         f"/team/roster",
         f"/teams/{sport}/roster",
         f"/{sport}/roster",
-        f"/sports/{sport}/2023-24/roster",       # Year-specific (optional)
+        f"/sports/{sport}/2023-24/roster",
+        f"/sports/{sport}/2022-23/roster",
+        f"/roster",  # catchall
     ]
     # Remove duplicates while preserving order
     seen = set()
@@ -30,44 +28,45 @@ def build_possible_roster_paths(sport, gender):
     return clean_paths
 
 def find_roster_link(page, sport):
-    """
-    If all else fails, scan homepage for 'roster'/'basketball' links.
-    """
     sport = sport.lower()
     links = page.query_selector_all("a")
     for link in links:
-        text = (link.inner_text() or "").lower()
-        href = link.get_attribute("href") or ""
-        if "roster" in text and sport in text and "coach" not in text and "staff" not in text:
-            if href.startswith("http"):
-                return href
-            elif href.startswith("/"):
-                base = page.url.split("/")[0] + "//" + page.url.split("/")[2]
-                return base + href
-    # Second pass: just find first link with "roster" and sport in href
+        try:
+            text = (link.inner_text() or "").lower()
+            href = link.get_attribute("href") or ""
+            if "roster" in text and sport in text and "coach" not in text and "staff" not in text:
+                if href.startswith("http"):
+                    return href
+                elif href.startswith("/"):
+                    base = page.url.split("/")[0] + "//" + page.url.split("/")[2]
+                    return base + href
+        except Exception:
+            continue
+    # Second pass: any "roster" + sport in href
     for link in links:
-        href = (link.get_attribute("href") or "").lower()
-        if "roster" in href and sport in href:
-            if href.startswith("http"):
-                return href
-            elif href.startswith("/"):
-                base = page.url.split("/")[0] + "//" + page.url.split("/")[2]
-                return base + href
+        try:
+            href = (link.get_attribute("href") or "").lower()
+            if "roster" in href and sport in href:
+                if href.startswith("http"):
+                    return href
+                elif href.startswith("/"):
+                    base = page.url.split("/")[0] + "//" + page.url.split("/")[2]
+                    return base + href
+        except Exception:
+            continue
     return None
 
 def is_404(page):
-    # Heuristic to detect 404 or not found
-    title = (page.title() or "").lower()
-    if "not found" in title or "404" in title:
-        return True
-    # Some sites show a body message instead
-    body = (page.inner_text("body") or "").lower()
-    return "not found" in body or "404" in body
+    try:
+        title = (page.title() or "").lower()
+        if "not found" in title or "404" in title:
+            return True
+        body = (page.inner_text("body") or "").lower()
+        return "not found" in body or "404" in body
+    except Exception:
+        return False
 
 def extract_roster_data(page, base_url):
-    """
-    Try multiple selectors to handle different site layouts.
-    """
     roster = []
     selectors = [
         'a[aria-label*="View Full Bio"]',
@@ -76,37 +75,38 @@ def extract_roster_data(page, base_url):
         '.player-card a',
         'table tr a',
         'a[href*="bio"]',
+        'tr td a',
     ]
     seen = set()
     for sel in selectors:
-        player_links = []
         try:
             player_links = page.query_selector_all(sel)
+            for link in player_links:
+                try:
+                    name = link.inner_text().strip()
+                    href = link.get_attribute("href")
+                    if href and href.startswith("http"):
+                        bio_url = href
+                    elif href and href.startswith("/"):
+                        bio_url = base_url.rstrip("/") + href
+                    elif href:
+                        bio_url = base_url.rstrip("/") + "/" + href
+                    else:
+                        bio_url = ""
+                    is_valid = (
+                        name and name.lower() != 'full bio'
+                        and '/coaches/' not in bio_url and '/staff/' not in bio_url
+                    )
+                    dedup_key = (name, bio_url)
+                    if is_valid and dedup_key not in seen:
+                        roster.append({"name": name, "player_bio_url": bio_url})
+                        seen.add(dedup_key)
+                except Exception:
+                    continue
+            if roster:
+                break
         except Exception:
             continue
-        for link in player_links:
-            try:
-                name = link.inner_text().strip()
-                href = link.get_attribute("href")
-                if href and href.startswith("http"):
-                    bio_url = href
-                elif href and href.startswith("/"):
-                    bio_url = base_url.rstrip("/") + href
-                elif href:
-                    bio_url = base_url.rstrip("/") + "/" + href
-                else:
-                    bio_url = ""
-                is_valid = (
-                    name and name.lower() != 'full bio' and '/coaches/' not in bio_url and '/staff/' not in bio_url
-                )
-                dedup_key = (name, bio_url)
-                if is_valid and dedup_key not in seen:
-                    roster.append({"name": name, "player_bio_url": bio_url})
-                    seen.add(dedup_key)
-            except Exception:
-                continue
-        if roster:
-            break  # Stop at first working selector with results
     return roster
 
 def click_popups(page):
@@ -129,8 +129,13 @@ def scrape_roster(base_url, sport, gender):
     with sync_playwright() as p:
         browser = p.chromium.launch(headless=True)
         page = browser.new_page()
-        page.goto(base_url, timeout=30000, wait_until="domcontentloaded")
-        click_popups(page)
+        try:
+            page.goto(base_url, timeout=30000, wait_until="domcontentloaded")
+            click_popups(page)
+        except Exception as e:
+            print(f"Could not load home page: {e}")
+            browser.close()
+            return {"error": "Could not load the school's main athletics homepage.", "roster": []}
         # Try each roster path
         for path in possible_paths:
             full_url = base_url.rstrip("/") + path
@@ -171,11 +176,11 @@ def scrape_roster(base_url, sport, gender):
         except Exception as e:
             print(f"Error crawling homepage: {e}")
         browser.close()
-        return {"error": "Could not find or load a valid roster for this school/sport/gender.", "roster": []}
+        return {"error": f"Could not find or load a valid roster for {sport} ({gender}) at this school. Please try another school or sport.", "roster": []}
 
 if __name__ == "__main__":
-    base_url = "https://gobearcats.com"
-    sport = "basketball"
+    base_url = "https://www.millikinathletics.com"
+    sport = "baseball"
     gender = "mens"
     roster = scrape_roster(base_url, sport, gender)
     print("\nScraped Roster Data:")

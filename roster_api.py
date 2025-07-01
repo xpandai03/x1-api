@@ -31,5 +31,26 @@ def scrape_roster_endpoint():
         print("API error:", traceback.format_exc())
         return jsonify({"error": str(e), "traceback": traceback.format_exc()}), 500
 
+@app.route('/scrape_player', methods=['GET'])
+def health_check():
+    try:
+        player_url = request.args.get('player_url')
+
+        # Input validation
+        if not player_url:
+            return jsonify({"error": "Missing required parameter: player_url"}), 400
+
+        from x1playwrightagent import extract_player_profile_html
+        results = extract_player_profile_html(player_url)
+        return jsonify({
+            "player_url": player_url,
+            "profile_html": results
+        })
+
+    except Exception as e:
+        import traceback
+        print("API error:", traceback.format_exc())
+        return jsonify({"error": str(e), "traceback": traceback.format_exc()}), 500
+
 if __name__ == "__main__":
     app.run(host="0.0.0.0", port=8080)

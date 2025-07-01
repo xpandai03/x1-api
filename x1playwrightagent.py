@@ -178,11 +178,39 @@ def scrape_roster(base_url, sport, gender):
         browser.close()
         return {"error": f"Could not find or load a valid roster for {sport} ({gender}) at this school. Please try another school or sport.", "roster": []}
 
+def extract_player_profile_html(player_url):
+    with sync_playwright() as p:
+        browser = p.chromium.launch(headless=True)
+        page = browser.new_page()
+        try:
+            page.goto(player_url, timeout=30000, wait_until="domcontentloaded")
+            click_popups(page)
+            time.sleep(3)  # Allow time for any dynamic content to load
+            html_content = page.content()
+            # Only include body tag content and return that
+            html_content = page.inner_html("main")
+            # remove the formatted html spaces and newlines
+            html_content = html_content.replace('\n', '').replace('\r', '').replace('\t', '')
+            # Optionally, you can also strip leading/trailing whitespace
+            # remove scripts and styles content and html in them
+            html_content = html_content.strip()
+            # Remove script and style tags to clean up the HTML
+            html_content = html_content.replace('<script type="text/javascript">', '').replace('</script>', '')
+            html_content = html_content.replace('<script type="text/template">', '').replace('</script>', '')
+            html_content = html_content.replace('<style>', '').replace('</style>', '')
+            html_content = html_content.replace('<script>', '').replace('</script>', '')
+            html_content = html_content.replace('<style>', '').replace('</style>', '')
+            return html_content
+        except Exception as e:
+            print(f"Error loading player profile: {e}")
+            return None
+        finally:
+            browser.close()
+
 if __name__ == "__main__":
     base_url = "https://www.millikinathletics.com"
     sport = "baseball"
     gender = "mens"
-    roster = scrape_roster(base_url, sport, gender)
+    roster = extract_player_profile_html('https://gohuskies.com/sports/baseball/roster/isaac-yeager/16346')
     print("\nScraped Roster Data:")
-    for athlete in roster if isinstance(roster, list) else roster.get('roster', []):
-        print(athlete)
+    print(roster)

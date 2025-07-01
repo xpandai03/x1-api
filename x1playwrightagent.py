@@ -1,5 +1,7 @@
 import time
 from playwright.sync_api import sync_playwright
+from bs4 import BeautifulSoup
+import re
 
 def build_possible_roster_paths(sport, gender):
     sport = sport.lower()
@@ -185,28 +187,35 @@ def extract_player_profile_html(player_url):
         try:
             page.goto(player_url, timeout=30000, wait_until="domcontentloaded")
             click_popups(page)
-            time.sleep(3)  # Allow time for any dynamic content to load
-            html_content = page.content()
-            # Only include body tag content and return that
-            html_content = page.inner_html("main")
-            # remove the formatted html spaces and newlines
-            html_content = html_content.replace('\n', '').replace('\r', '').replace('\t', '')
-            # Optionally, you can also strip leading/trailing whitespace
-            # remove scripts and styles content and html in them
-            html_content = html_content.strip()
-            # Remove script and style tags to clean up the HTML
-            html_content = html_content.replace('<script type="text/javascript">', '').replace('</script>', '')
-            html_content = html_content.replace('<script type="text/template">', '').replace('</script>', '')
-            html_content = html_content.replace('<style>', '').replace('</style>', '')
-            html_content = html_content.replace('<script>', '').replace('</script>', '')
-            html_content = html_content.replace('<style>', '').replace('</style>', '')
-            return html_content
+            time.sleep(3)  # Allow time for dynamic content to load
+
+            # Get only <main> tag's content
+            raw_html = page.inner_html("main")
+
+            # Parse HTML with BeautifulSoup
+            soup = BeautifulSoup(raw_html, "lxml")
+
+            # Remove <script> and <style> tags entirely
+            for tag in soup(["script", "style"]):
+                tag.decompose()
+
+            # Strip leading/trailing whitespace from all text nodes
+            for text_node in soup.find_all(string=True):
+                cleaned = text_node.strip()
+                text_node.replace_with(cleaned)
+
+            # Convert back to HTML and remove extra spaces between tags
+            cleaned_html = str(soup)
+            cleaned_html = re.sub(r'>\s+<', '><', cleaned_html)  # Remove space between tags
+            cleaned_html = cleaned_html.strip()
+
+            return cleaned_html
+
         except Exception as e:
             print(f"Error loading player profile: {e}")
             return None
         finally:
             browser.close()
-
 if __name__ == "__main__":
     base_url = "https://www.millikinathletics.com"
     sport = "baseball"

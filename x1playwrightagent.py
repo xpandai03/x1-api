@@ -181,32 +181,35 @@ def scrape_roster(base_url, sport, gender):
         return {"error": f"Could not find or load a valid roster for {sport} ({gender}) at this school. Please try another school or sport.", "roster": []}
 
 def extract_player_profile_html(player_url):
+    UNWANTED_TAGS = [
+        'script', 'style', 'iframe', 'svg', 'path', 'noscript',
+        'link', 'meta', 'object', 'embed', 'form', 'footer',
+        'header', 'canvas', 'picture', 'source', 'nav'
+    ]
+
     with sync_playwright() as p:
         browser = p.chromium.launch(headless=True)
         page = browser.new_page()
         try:
             page.goto(player_url, timeout=30000, wait_until="domcontentloaded")
             click_popups(page)
-            time.sleep(3)  # Allow time for dynamic content to load
+            time.sleep(3)  # Let dynamic content load
 
-            # Get only <main> tag's content
             raw_html = page.inner_html("main")
-
-            # Parse HTML with BeautifulSoup
             soup = BeautifulSoup(raw_html, "lxml")
 
-            # Remove <script> and <style> tags entirely
-            for tag in soup(["script", "style"]):
-                tag.decompose()
+            # Remove unwanted tags
+            for tag in UNWANTED_TAGS:
+                for element in soup.find_all(tag):
+                    element.decompose()
 
-            # Strip leading/trailing whitespace from all text nodes
+            # Strip whitespace in text nodes
             for text_node in soup.find_all(string=True):
-                cleaned = text_node.strip()
-                text_node.replace_with(cleaned)
+                text_node.replace_with(text_node.strip())
 
-            # Convert back to HTML and remove extra spaces between tags
+            # Clean up whitespace between tags
             cleaned_html = str(soup)
-            cleaned_html = re.sub(r'>\s+<', '><', cleaned_html)  # Remove space between tags
+            cleaned_html = re.sub(r'>\s+<', '><', cleaned_html)
             cleaned_html = cleaned_html.strip()
 
             return cleaned_html
@@ -216,6 +219,7 @@ def extract_player_profile_html(player_url):
             return None
         finally:
             browser.close()
+            
 if __name__ == "__main__":
     base_url = "https://www.millikinathletics.com"
     sport = "baseball"
